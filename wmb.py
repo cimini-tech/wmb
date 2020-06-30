@@ -1,9 +1,9 @@
-source_folder = "./publish/"
-destination_folder = "./html/"
-template_folder = "./parts/"
+source_folder = "publish/"
+destination_folder = "html/"
+template_folder = "parts/"
 page_header = "header.html"
 page_footer = "footer.html"
-index_header = "index-header.html"
+index_header_file = "index_header.html"
 html_ext = ".html"
 
 import os
@@ -11,15 +11,14 @@ import re
 from datetime import datetime
 from shutil import move, copy
 from html.parser import HTMLParser
+from pathlib import Path
 
-def list_files(path):
-	return [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+def _copy(self, target):
+    import shutil
+    assert self.is_file()
+    shutil.copy(str(self), str(target))  # str() only there for Python < (3, 6)
 
-def read_file(path):
-	if os.path.isfile(path):
-		with open(path) as f:
-			return f.readlines()
-	return [] 
+Path.copy = _copy
 
 def overwrite_file(path,content):
 	with open(path,'w') as f:
@@ -40,10 +39,11 @@ def fix_file_name(post):
 
 def insert_write_time(post,write_time):
 	if not post.metadata.published_time:
-	    value = "<p class=\"published-time\">Published on <time datetime=\"" + write_time.strftime("%m/%d/%Y %H:%M:%S") + "\">" + write_time.strftime("%m/%d/%Y") + "</time></p>"
-	    content = read_file(post.source)
-	    content.insert(((post.metadata.article_title_index or 0)+1), value)
-	    overwrite_file(post.source,content)
+	    value = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time></p>".format(
+	        write_time.strftime("%m/%d/%Y %H:%M:%S"),
+	        write_time.strftime("%m/%d/%Y"))
+	    post.content.insert(((post.metadata.article_title_index or 0)+1), value)
+	    post.source.write_text(content)
 	    return Post(post.source)
 	return post
 		
@@ -88,47 +88,51 @@ class ArticleParser(HTMLParser):
                 self.published_time_index = i
             i = i + 1
 
+
 class Post:
-	def __init__(self, filename):
-		self.filename = filename
-		self.source = source_folder + filename
-		content = read_file(self.source)
+	def __init__(self, filepath):
+		self.filename = filepath.name
+		self.source = filepath
+		self.destination = Path() / destination_folder / self.filename
+		self.content = self.source.read_text().splitlines()
 		self.metadata = ArticleParser()
-		self.metadata.parse(content)
-		self.filename_sanitized = sanitize_filename(filename,self.metadata.article_title)
+		self.metadata.parse(self.content)
+		self.filename_sanitized = sanitize_filename(self.filename,self.metadata.article_title)
+	
+	def __str__(self): 
+	    return "\n".join(self.content)
 
 def get_html_index_list_item(post):
-    return ("<li><a href=\""
-        + post.filename
-        + "\">"
-        + post.metadata.article_title
-        + "</a>"
-        + post.metadata.published_time.strftime(" – %b %-d")
-        + "\n")
+    return ("<li><a href=\"{0}\">{1}</a>{2}\n".format(
+        post.filename,
+        post.metadata.article_title,
+        post.metadata.published_time.strftime(" - %b %-d")))
 
 def generate_html_index(posts):
     html_index = ["<ul>"]
     [html_index.append(get_html_index_list_item(post)) for post in posts]
     html_index.append("</ul>")
-    return html_index
+    return "\n".join(html_index)
+
 
 def finalize(posts):
-	header = read_file(template_folder + "header.html")
-	footer = read_file(template_folder + "footer.html")
-	index_header = read_file(template_folder + "index_header.html")
-	index_html = header + index_header + generate_html_index(posts) + footer
-	print(index_html)
-	overwrite_file((destination_folder + "index.html"),index_html)
-	for post in posts:
-		post_content = header + read_file(post.source) + footer
-		overwrite_file((destination_folder + post.filename),post_content)
-	for file in list_files(template_folder):
-		copy(template_folder + file,destination_folder + file)
-		 
+    template_path = Path(template_folder)
+    destination_path = Path(destination_folder)
+    header = (template_path / page_header).read_text()
+    footer = (template_path / page_footer).read_text()
+    index_header = (template_path / index_header_file).read_text()
+    index_html = header + index_header + generate_html_index(posts) + footer
+    for file in destination_path.glob("*"):
+        os.remove(file)
+    for post in posts:
+        post.destination.write_text(header + str(post) + footer)
+    for file in template_path.glob("*"):
+	    file.copy(destination_path / file.name)
+    (destination_path / "index.html").write_text(index_html)
 
 now = datetime.now()
 
-posts = [Post(file_path) for file_path in list_files(source_folder)]
+posts = [Post(file_path) for file_path in Path(source_folder).glob("*")]
 
 posts = [insert_write_time(fix_file_name(post), now) for post in posts]
 
