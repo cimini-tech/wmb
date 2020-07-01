@@ -14,15 +14,15 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 def _copy(self, target):
-    import shutil
     assert self.is_file()
-    shutil.copy(str(self), str(target))  # str() only there for Python < (3, 6)
+    copy(str(self), str(target))  # str() only there for Python < (3, 6)
+
+def _move(self, target):
+    assert self.is_file()
+    move(str(self), str(target))
 
 Path.copy = _copy
-
-def overwrite_file(path,content):
-	with open(path,'w') as f:
-		f.writelines(content)
+Path.move = _move
 
 def sanitize_filename(filename, article_title):
 	if article_title:
@@ -33,19 +33,29 @@ def sanitize_filename(filename, article_title):
 
 def fix_file_name(post):
 	if post.filename != post.filename_sanitized:
-		move(post.source, (source_folder + post.filename_sanitized))
-		return Post(post.filename_sanitized)
+		post.source.move(post.source.parents[0] / post.filename_sanitized)
+		return Post(post.source.parents[0] / post.filename_sanitized)
 	return post
 
 def insert_write_time(post,write_time):
-	if not post.metadata.published_time:
-	    value = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time></p>".format(
-	        write_time.strftime("%m/%d/%Y %H:%M:%S"),
-	        write_time.strftime("%m/%d/%Y"))
-	    post.content.insert(((post.metadata.article_title_index or 0)+1), value)
-	    post.source.write_text(content)
-	    return Post(post.source)
-	return post
+    if not post.metadata.published_time:
+        value = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>".format(
+                write_time.strftime("%m/%d/%Y %H:%M:%S"),
+                write_time.strftime("%m/%d/%Y"))
+        post.content.insert(((post.metadata.article_title_index or 0)+1), value)
+        post.source.write_text(str(post))
+        return Post(post.source)
+    elif post.last_modified.date() > post.metadata.published_time.date():
+        value = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>".format(
+                        post.metadata.published_time.strftime("%m/%d/%Y %H:%M:%S"),
+                        post.metadata.published_time.strftime("%m/%d/%Y"))
+        value = value + " and last modified <time datetime=\"{0}\">{1}</time>".format(
+            post.last_modified.strftime("%m/%d/%Y %H:%M:%S"),
+            post.last_modified.strftime("%m/%d/%Y"))
+        post.content[post.metadata.published_time_index] = value
+        post.source.write_text(str(post))
+        return Post(post.source)
+    return post
 		
 
 class ArticleParser(HTMLParser):
@@ -98,6 +108,7 @@ class Post:
 		self.metadata = ArticleParser()
 		self.metadata.parse(self.content)
 		self.filename_sanitized = sanitize_filename(self.filename,self.metadata.article_title)
+		self.last_modified = datetime.fromtimestamp(self.source.stat().st_mtime)
 	
 	def __str__(self): 
 	    return "\n".join(self.content)
@@ -122,12 +133,9 @@ def finalize(posts):
     footer = (template_path / page_footer).read_text()
     index_header = (template_path / index_header_file).read_text()
     index_html = header + index_header + generate_html_index(posts) + footer
-    for file in destination_path.glob("*"):
-        os.remove(file)
-    for post in posts:
-        post.destination.write_text(header + str(post) + footer)
-    for file in template_path.glob("*"):
-	    file.copy(destination_path / file.name)
+    [os.remove(file) for file in destination_path.glob("*")]
+    [post.destination.write_text(header + str(post) + footer) for post in posts]
+    [file.copy(destination_path / file.name) for file in template_path.glob("*")]
     (destination_path / "index.html").write_text(index_html)
 
 now = datetime.now()
