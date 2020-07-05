@@ -13,12 +13,18 @@ from shutil import move, copy
 from html.parser import HTMLParser
 from pathlib import Path
 
+def test_is_file(self):
+    try:
+        assert self.is_file()
+    except:
+        return
+
 def _copy(self, target):
-    assert self.is_file()
+    test_is_file(self)
     copy(str(self), str(target))  # str() only there for Python < (3, 6)
 
 def _move(self, target):
-    assert self.is_file()
+    test_is_file(self)
     move(str(self), str(target))
 
 Path.copy = _copy
@@ -63,9 +69,10 @@ class ArticleParser(HTMLParser):
     article_title = None
     published_time_index = None
     published_time = None
-    open_tags = []
-    
-    def handle_starttag(self, tag, attrs):
+    category = None
+    open_tag = None
+
+    def parse_published_time(self, tag, attrs):
         if (self.published_time is None
         and tag == 'time'
         and len(attrs) > 0
@@ -75,17 +82,29 @@ class ArticleParser(HTMLParser):
                 self.published_time = datetime.strptime(attrs[0][1], "%m/%d/%Y %H:%M:%S")
             except ValueError:
                 pass
-        self.open_tags.append(tag)
+
+    def parse_category(self, tag, attrs):
+        if (self.category is None
+        and tag == "category"
+        and len(attrs) > 0
+        and len(attrs[0]) > 1
+        and attrs[0][0] == "type"):
+            self.category = attrs[0][1]
+
+    def handle_starttag(self, tag, attrs):
+        self.parse_published_time(tag, attrs)
+        self.parse_category(tag, attrs)
+        self.open_tag = tag
 
     def handle_endtag(self, tag):
-        del self.open_tags[-1]
+        self.open_tag = None
 
     def handle_data(self, data):
-        if self.article_title is None and self.open_tags[-1] == "h1":
+        if self.article_title is None and self.open_tag == "h1":
            self.article_title = data
 
     def is_not_done(self):
-        return self.article_title_index is None or self.published_time_index is None
+        return self.article_title_index is None or self.published_time_index is None or self.category is None
         
     def parse(self, article):
         i = 0
@@ -97,6 +116,9 @@ class ArticleParser(HTMLParser):
             if self.published_time_index is None and self.published_time:
                 self.published_time_index = i
             i = i + 1
+
+    def __str__(self):
+        return "\n".join("%s: %s" % item for item in vars(self).items())
 
 
 class Post:
@@ -113,20 +135,26 @@ class Post:
 	def __str__(self): 
 	    return "\n".join(self.content)
 
+def get_icon_path(post):
+    if post.metadata.category:
+        return "<img src={0}.svg/>".format(post.metadata.category)
+    return ""
+
 def get_html_index_list_item(post):
-    return ("<li><a href=\"{0}\">{1}</a>{2}\n".format(
+    return ("<li>{3}<a href=\"{0}\">{1}</a>{2}\n".format(
         post.filename,
         post.metadata.article_title,
-        post.metadata.published_time.strftime(" - %b %-d")))
+        post.metadata.published_time.strftime(" – %b %-d"),
+        get_icon_path(post)))
 
 def generate_html_index(posts):
-    html_index = ["<ul>"]
+    html_index = ["<ul class=\"posts\">"]
     [html_index.append(get_html_index_list_item(post)) for post in posts]
     html_index.append("</ul>")
     return "\n".join(html_index)
 
 
-def finalize(posts):
+def compile(posts):
     template_path = Path(template_folder)
     destination_path = Path(destination_folder)
     header = (template_path / page_header).read_text()
@@ -145,5 +173,8 @@ posts = [Post(file_path) for file_path in Path(source_folder).glob("*")]
 posts = [insert_write_time(fix_file_name(post), now) for post in posts]
 
 posts.sort(key=lambda x: x.metadata.published_time, reverse=True)
+
+# for post in posts :
+#    print(post.metadata)
     
-finalize(posts)
+compile(posts)
