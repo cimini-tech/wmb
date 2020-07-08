@@ -47,7 +47,26 @@ def fix_file_name(post):
 
 def get_date_stamps(*times):
     return [timestamps for time in times for timestamps in (time.strftime("%m/%d/%Y %H:%M:%S"), time.strftime("%m/%d/%Y"))]
-    
+
+def insert_publish_time(post, now = datetime.now()):
+    if not post.metadata.published_time:
+        post.content.insert(
+            (post.metadata.article_title_index or 0) + 1,
+            "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>".format(
+                *get_date_stamps(now)
+            )
+        )
+        post.source.write_text(str(post))
+        return Post(post.source)
+    return post
+
+def insert_modified_time(post):
+    if post.metadata.published_time and post.last_modified.date() > post.metadata.published_time.date():
+        post.content[post.metadata.published_time_index] += " and last modified <time datetime=\"{0}\">{1}</time>".format(
+            *get_date_stamps(post.last_modified)
+        )
+    return post
+
 def insert_write_time(post, now = datetime.now()):
     ptime_html, mtime_html = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>", " and last modified <time datetime=\"{2}\">{3}</time>" 
     index = post.metadata.published_time_index or (post.metadata.article_title_index or 0) + 1
@@ -171,7 +190,7 @@ def get_posts():
         for file_path in Path(source_folder).glob("*")
         if file_path.is_file()
     ]
-    posts = [insert_write_time(fix_file_name(post)) for post in posts]
+    posts = [insert_modified_time(insert_publish_time(fix_file_name(post))) for post in posts]
     posts.sort(key=lambda x: x.metadata.published_time, reverse=True)
     return posts
 
