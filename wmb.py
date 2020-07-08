@@ -1,6 +1,7 @@
 source_folder = "publish/"
 destination_folder = "html/"
 template_folder = "parts/"
+aside_folder = "aside/"
 page_header = "header.html"
 page_footer = "footer.html"
 index_header_file = "index_header.html"
@@ -12,6 +13,7 @@ from datetime import datetime
 from shutil import move, copy
 from html.parser import HTMLParser
 from pathlib import Path
+from distutils import dir_util
 
 def test_is_file(self):
     try:
@@ -43,26 +45,20 @@ def fix_file_name(post):
 		return Post(post.source.parents[0] / post.filename_sanitized)
 	return post
 
-def insert_write_time(post,write_time):
+def get_date_stamps(*times):
+    return [timestamps for time in times for timestamps in (time.strftime("%m/%d/%Y %H:%M:%S"), time.strftime("%m/%d/%Y"))]
+    
+def insert_write_time(post, now = datetime.now()):
+    ptime_html, mtime_html = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>", " and last modified <time datetime=\"{2}\">{3}</time>" 
+    index = post.metadata.published_time_index or (post.metadata.article_title_index or 0) + 1
     if not post.metadata.published_time:
-        value = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>".format(
-                write_time.strftime("%m/%d/%Y %H:%M:%S"),
-                write_time.strftime("%m/%d/%Y"))
-        post.content.insert(((post.metadata.article_title_index or 0)+1), value)
-        post.source.write_text(str(post))
-        return Post(post.source)
+        post.content.insert(index, ptime_html.format(*get_date_stamps(now)))
     elif post.last_modified.date() > post.metadata.published_time.date():
-        value = "<p class=\"published-time\">Published on <time datetime=\"{0}\">{1}</time>".format(
-                        post.metadata.published_time.strftime("%m/%d/%Y %H:%M:%S"),
-                        post.metadata.published_time.strftime("%m/%d/%Y"))
-        value = value + " and last modified <time datetime=\"{0}\">{1}</time>".format(
-            post.last_modified.strftime("%m/%d/%Y %H:%M:%S"),
-            post.last_modified.strftime("%m/%d/%Y"))
-        post.content[post.metadata.published_time_index] = value
-        post.source.write_text(str(post))
-        return Post(post.source)
-    return post
-		
+        post.content[index] = (ptime_html + mtime_html).format(*get_date_stamps(post.metadata.published_time, post.last_modified))
+    else:
+        return post
+    post.source.write_text(str(post))
+    return Post(post.source)
 
 class ArticleParser(HTMLParser):
     article_title_index =  None
@@ -157,24 +153,26 @@ def generate_html_index(posts):
 def compile(posts):
     template_path = Path(template_folder)
     destination_path = Path(destination_folder)
+    aside_path = Path(aside_folder)
     header = (template_path / page_header).read_text()
     footer = (template_path / page_footer).read_text()
     index_header = (template_path / index_header_file).read_text()
     index_html = header + index_header + generate_html_index(posts) + footer
-    [os.remove(file) for file in destination_path.glob("*")]
+    [os.remove(file) for file in destination_path.glob("*") if file.is_file()]
     [post.destination.write_text(header + str(post) + footer) for post in posts]
+    [(destination_path / file.name).write_text(header + (file.read_text()) + footer) for file in aside_path.glob("*")]
     [file.copy(destination_path / file.name) for file in template_path.glob("*")]
+    dir_util.copy_tree((source_folder + "attachments/"),(destination_folder + "attachments/"),preserve_mode=0)
     (destination_path / "index.html").write_text(index_html)
 
-now = datetime.now()
+def get_posts():
+    posts = [
+        Post(file_path)
+        for file_path in Path(source_folder).glob("*")
+        if file_path.is_file()
+    ]
+    posts = [insert_write_time(fix_file_name(post)) for post in posts]
+    posts.sort(key=lambda x: x.metadata.published_time, reverse=True)
+    return posts
 
-posts = [Post(file_path) for file_path in Path(source_folder).glob("*")]
-
-posts = [insert_write_time(fix_file_name(post), now) for post in posts]
-
-posts.sort(key=lambda x: x.metadata.published_time, reverse=True)
-
-# for post in posts :
-#    print(post.metadata)
-    
-compile(posts)
+compile(get_posts())
